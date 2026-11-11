@@ -2,43 +2,57 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>NEBULA STRIKE — 3D Space Combat</title>
-<meta name="description" content="A neon 3D space combat game. Fly, blast asteroids and alien drones, chain combos, survive escalating waves. Built with Three.js.">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>NEBULA STRIKE</title>
+<meta name="description" content="A 3D space shooter that runs in the browser — built with Three.js.">
+<meta name="theme-color" content="#02010a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { height:100%; background:#02010a; overflow:hidden; font-family:'Rajdhani', ui-monospace, monospace; color:#cfe9ff; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; background:#02010a; overflow:hidden; font-family:'Rajdhani', ui-monospace, monospace; color:#cfe9ff; touch-action:none; user-select:none; -webkit-user-select:none; }
   canvas { position:fixed; inset:0; display:block; touch-action:none; }
   .hidden { display:none !important; }
 
   /* ---------- HUD ---------- */
-  #hud { position:fixed; top:0; left:0; right:0; padding:14px 18px; display:flex; justify-content:space-between; align-items:flex-start; pointer-events:none; z-index:5; font-family:'Orbitron', monospace; }
+  #hud { position:fixed; top:0; left:0; right:0; padding:12px 16px; display:flex; justify-content:space-between; align-items:flex-start; pointer-events:none; z-index:5; font-family:'Orbitron', monospace; padding-top:max(12px, env(safe-area-inset-top)); }
   .glow { text-shadow:0 0 12px rgba(0,229,255,.8), 0 0 34px rgba(0,229,255,.3); }
   .hud-right { text-align:right; }
-  #score { font-size:clamp(22px, 3.4vw, 34px); color:#aef6ff; letter-spacing:.08em; }
-  #waveLabel { font-size:clamp(14px, 2vw, 20px); color:#aef6ff; }
+  #score { font-size:clamp(20px, 3.4vw, 32px); color:#aef6ff; letter-spacing:.08em; }
+  #waveLabel { font-size:clamp(13px, 2vw, 19px); color:#aef6ff; }
   .label { font-size:10px; letter-spacing:.4em; color:#5f7fa8; text-shadow:none; margin-top:2px; }
-  #hearts { font-size:20px; color:#ff3b6b; text-shadow:0 0 10px rgba(255,59,107,.9); letter-spacing:.18em; margin-top:6px; }
-  #combo { font-size:14px; color:#ffd24d; text-shadow:0 0 12px rgba(255,210,77,.9); height:18px; letter-spacing:.12em; }
-  #timers { margin-top:6px; font-size:12px; color:#7cf7ff; text-shadow:0 0 10px rgba(0,229,255,.7); height:16px; letter-spacing:.1em; }
+  #hearts { font-size:19px; color:#ff3b6b; text-shadow:0 0 10px rgba(255,59,107,.9); letter-spacing:.18em; margin-top:6px; }
+  #combo { font-size:13px; color:#ffd24d; text-shadow:0 0 12px rgba(255,210,77,.9); height:17px; letter-spacing:.12em; }
+  #timers { margin-top:5px; font-size:11px; color:#7cf7ff; text-shadow:0 0 10px rgba(0,229,255,.7); height:15px; letter-spacing:.1em; }
 
-  #muteBtn { position:fixed; bottom:12px; right:14px; z-index:6; pointer-events:auto; font-family:'Orbitron'; font-size:16px; color:#7cf7ff; background:rgba(0,229,255,.07); border:1px solid rgba(124,247,255,.3); border-radius:10px; padding:6px 12px; cursor:pointer; }
-  #muteBtn:hover { background:rgba(0,229,255,.16); }
+  /* ---------- side buttons ---------- */
+  .ctl { position:fixed; top:max(60px, calc(env(safe-area-inset-top) + 48px)); right:10px; z-index:7; display:flex; flex-direction:column; gap:8px; }
+  .ctl button { pointer-events:auto; font-size:15px; line-height:1; color:#7cf7ff; background:rgba(0,229,255,.07); border:1px solid rgba(124,247,255,.3); border-radius:10px; padding:8px 11px; cursor:pointer; }
+  .ctl button:hover { background:rgba(0,229,255,.16); }
+  .touch-only { display:none !important; }
+  body.touch .touch-only { display:inline-block !important; }
+
+  /* ---------- touch controls ---------- */
+  #fireBtn { position:fixed; right:20px; bottom:max(24px, env(safe-area-inset-bottom)); width:94px; height:94px; border-radius:50%; border:2px solid rgba(255,47,146,.65); background:rgba(255,47,146,.12); color:#ff8fb0; font-family:'Orbitron'; font-size:15px; letter-spacing:.15em; z-index:7; touch-action:none; box-shadow:0 0 22px rgba(255,47,146,.35); }
+  #fireBtn:active { background:rgba(255,47,146,.32); }
+  #joyBase { position:fixed; width:132px; height:132px; margin:-66px 0 0 -66px; border-radius:50%; border:2px solid rgba(124,247,255,.45); background:rgba(0,229,255,.07); z-index:7; pointer-events:none; }
+  #joyKnob { position:fixed; width:56px; height:56px; margin:-28px 0 0 -28px; border-radius:50%; background:rgba(124,247,255,.3); border:1px solid rgba(124,247,255,.8); z-index:8; pointer-events:none; box-shadow:0 0 16px rgba(0,229,255,.5); }
 
   /* ---------- wave banner ---------- */
   .banner { position:fixed; top:20%; width:100%; text-align:center; z-index:6; pointer-events:none; font-family:'Orbitron'; }
-  #bannerText { font-size:clamp(34px, 6vw, 64px); font-weight:900; color:#aef6ff; letter-spacing:.28em; text-shadow:0 0 24px #00e5ff, 0 0 90px rgba(0,229,255,.5); animation:bannerIn 2.3s ease forwards; }
+  #bannerText { font-size:clamp(32px, 6vw, 62px); font-weight:900; color:#aef6ff; letter-spacing:.28em; text-shadow:0 0 24px #00e5ff, 0 0 90px rgba(0,229,255,.5); animation:bannerIn 2.3s ease forwards; }
   #bannerSub { margin-top:10px; font-size:clamp(12px, 2vw, 18px); color:#ff2f92; letter-spacing:.5em; text-shadow:0 0 16px rgba(255,47,146,.8); animation:bannerIn 2.3s ease forwards; }
   @keyframes bannerIn { 0%{opacity:0; transform:scale(.55)} 12%{opacity:1; transform:scale(1.08)} 22%{transform:scale(1)} 76%{opacity:1} 100%{opacity:0; transform:scale(1.05)} }
 
   /* ---------- boss bar ---------- */
-  #bossBar { position:fixed; top:66px; left:50%; transform:translateX(-50%); width:min(62vw, 520px); height:10px; border:1px solid rgba(255,79,109,.7); box-shadow:0 0 16px rgba(255,79,109,.5); z-index:6; border-radius:2px; overflow:hidden; }
+  #bossLabel { position:fixed; top:46px; left:50%; transform:translateX(-50%); z-index:6; font-family:'Orbitron'; font-size:11px; letter-spacing:.5em; color:#ff8fb0; text-shadow:0 0 10px rgba(255,47,146,.8); }
+  #bossBar { position:fixed; top:64px; left:50%; transform:translateX(-50%); width:min(62vw, 520px); height:10px; border:1px solid rgba(255,79,109,.7); box-shadow:0 0 16px rgba(255,79,109,.5); z-index:6; border-radius:2px; overflow:hidden; }
   #bossFill { height:100%; width:100%; background:linear-gradient(90deg, #ff2f92, #ff7b2f); transition:width .15s ease; }
-  #bossLabel { position:fixed; top:48px; left:50%; transform:translateX(-50%); z-index:6; font-family:'Orbitron'; font-size:11px; letter-spacing:.5em; color:#ff8fb0; text-shadow:0 0 10px rgba(255,47,146,.8); }
 
   /* ---------- score popups ---------- */
   #popups div { position:fixed; font-family:'Orbitron'; font-weight:700; font-size:16px; color:#aef6ff; text-shadow:0 0 10px currentColor; pointer-events:none; z-index:6; opacity:0; white-space:nowrap; }
@@ -49,26 +63,37 @@
   #scanlines { position:fixed; inset:0; pointer-events:none; z-index:2; opacity:.05; background:repeating-linear-gradient(0deg, transparent 0 2px, #9fd8ff 2px 3px); }
 
   /* ---------- screens ---------- */
-  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; z-index:10; text-align:center; padding:24px; background:radial-gradient(ellipse at 50% 40%, rgba(10,8,40,.2), rgba(2,1,10,.8)); }
+  .screen { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:15px; z-index:10; text-align:center; padding:24px; background:radial-gradient(ellipse at 50% 40%, rgba(10,8,40,.2), rgba(2,1,10,.8)); }
   .title { font-family:'Orbitron'; font-weight:900; font-size:clamp(38px, 9vw, 92px); letter-spacing:.14em; color:#eaffff; line-height:1; text-shadow:0 0 18px #00e5ff, 0 0 60px rgba(0,229,255,.55), 0 0 130px rgba(123,47,255,.35); }
   .title span { display:block; font-size:.5em; color:#ff2f92; text-shadow:0 0 18px #ff2f92, 0 0 70px rgba(255,47,146,.5); letter-spacing:.62em; margin-top:8px; }
   .tagline { letter-spacing:.42em; color:#7fa8d9; font-size:13px; }
-  .controls { display:grid; grid-template-columns:auto auto; gap:8px 18px; font-size:15px; color:#9fc4e8; margin:8px 0; align-items:center; }
+  .controls { display:grid; grid-template-columns:auto auto; gap:8px 18px; font-size:15px; color:#9fc4e8; margin:6px 0; align-items:center; }
   .controls .k { text-align:right; }
   .key { font-family:'Orbitron'; font-size:12px; color:#7cf7ff; border:1px solid rgba(124,247,255,.35); padding:3px 12px; border-radius:7px; background:rgba(0,229,255,.06); letter-spacing:.1em; }
-  .btn { font-family:'Orbitron'; font-weight:700; font-size:18px; letter-spacing:.22em; color:#02121a; background:linear-gradient(90deg, #00e5ff, #7cf7ff); border:none; padding:15px 44px; border-radius:44px; cursor:pointer; box-shadow:0 0 26px rgba(0,229,255,.55), inset 0 0 0 1px rgba(255,255,255,.4); transition:transform .15s ease, box-shadow .15s ease; margin-top:6px; }
+  .btn { font-family:'Orbitron'; font-weight:700; font-size:18px; letter-spacing:.22em; color:#02121a; background:linear-gradient(90deg, #00e5ff, #7cf7ff); border:none; padding:15px 44px; border-radius:44px; cursor:pointer; box-shadow:0 0 26px rgba(0,229,255,.55), inset 0 0 0 1px rgba(255,255,255,.4); transition:transform .15s ease, box-shadow .15s ease; touch-action:manipulation; margin-top:4px; }
   .btn:hover { transform:scale(1.07); box-shadow:0 0 48px rgba(0,229,255,.9); }
+  .btn.small { font-size:14px; padding:12px 30px; }
+  .btn.ghost { background:transparent; color:#7cf7ff; box-shadow:inset 0 0 0 2px rgba(124,247,255,.4); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
   .hs { color:#5f7fa8; letter-spacing:.3em; font-size:13px; }
   .hs span { color:#ffd24d; }
   .hint { color:#41597a; font-size:12px; letter-spacing:.22em; }
   #touchHint { color:#7cf7ff; letter-spacing:.2em; font-size:13px; }
   .go-title { font-family:'Orbitron'; color:#ff2f92; font-size:clamp(26px, 6vw, 52px); letter-spacing:.24em; text-shadow:0 0 22px rgba(255,47,146,.8); }
   .final-label { color:#5f7fa8; letter-spacing:.5em; font-size:12px; }
-  .final-score { font-family:'Orbitron'; font-size:clamp(42px, 8vw, 84px); color:#aef6ff; text-shadow:0 0 26px #00e5ff; line-height:1; }
+  .final-score { font-family:'Orbitron'; font-size:clamp(40px, 8vw, 80px); color:#aef6ff; text-shadow:0 0 26px #00e5ff; line-height:1; }
+  #goStats { color:#9fc4e8; font-size:14px; letter-spacing:.2em; }
   .new-record { color:#ffd24d; letter-spacing:.3em; font-family:'Orbitron'; font-size:14px; animation:pulse 1s infinite alternate; }
   @keyframes pulse { from{opacity:.45} to{opacity:1} }
-  #pause { background:rgba(2,1,10,.6); backdrop-filter:blur(3px); }
+  #pause { background:rgba(2,1,10,.65); backdrop-filter:blur(3px); }
   #pause h2 { font-family:'Orbitron'; letter-spacing:.4em; color:#aef6ff; }
+
+  /* ---------- rotate prompt (portrait phones) ---------- */
+  #rotate { display:none; position:fixed; inset:0; z-index:50; background:#02010a; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; padding:30px; font-family:'Orbitron'; color:#aef6ff; letter-spacing:.25em; }
+  #rotate .icon { font-size:58px; animation:spin 1.6s ease-in-out infinite alternate; filter:drop-shadow(0 0 18px rgba(0,229,255,.7)); }
+  #rotate p { font-size:15px; color:#7fa8d9; letter-spacing:.2em; }
+  @keyframes spin { from{transform:rotate(0)} to{transform:rotate(90deg)} }
+  @media (orientation: portrait) and (pointer: coarse) { #rotate { display:flex; } }
 </style>
 <script type="importmap">
 {
@@ -95,6 +120,12 @@
   </div>
 </div>
 
+<div class="ctl">
+  <button id="muteBtn" title="Mute (M)">🔊</button>
+  <button id="fsBtn" title="Fullscreen">⛶</button>
+  <button id="pauseBtn" class="touch-only" title="Pause">⏸</button>
+</div>
+
 <div id="banner" class="banner hidden">
   <div id="bannerText">WAVE 1</div>
   <div id="bannerSub"></div>
@@ -103,26 +134,28 @@
 <div id="bossLabel" class="hidden">DREADNOUGHT</div>
 <div id="bossBar" class="hidden"><div id="bossFill"></div></div>
 
+<div id="fireBtn" class="hidden">FIRE</div>
+<div id="joyBase" class="hidden"></div>
+<div id="joyKnob" class="hidden"></div>
+
 <div id="popups"></div>
 <div id="hitflash"></div>
 <div id="vignette"></div>
 <div id="scanlines"></div>
 
-<button id="muteBtn" title="Toggle sound (M)">🔊</button>
-
 <div id="menu" class="screen">
   <h1 class="title">NEBULA<span>STRIKE</span></h1>
-  <p class="tagline">NEON VOID COMBAT — SURVIVE THE WAVES</p>
+  <p class="tagline">NEON VOID COMBAT</p>
   <div class="controls" id="keyControls">
     <span class="k">Move</span><span><span class="key">MOUSE</span> <span class="key">W A S D</span></span>
     <span class="k">Fire</span><span><span class="key">CLICK</span> <span class="key">SPACE</span></span>
     <span class="k">Pause</span><span><span class="key">P</span></span>
     <span class="k">Mute</span><span><span class="key">M</span></span>
   </div>
-  <p id="touchHint" class="hidden">DRAG TO FLY · AUTO-FIRE ON TOUCH</p>
+  <p id="touchHint" class="hidden">DRAG LEFT SIDE TO FLY · AUTO-FIRE · HOLD FIRE BUTTON</p>
   <button id="startBtn" class="btn">▶ LAUNCH</button>
   <p class="hs">HIGH SCORE <span id="menuHigh">0</span></p>
-  <p class="hint">CHAIN KILLS FOR COMBO MULTIPLIERS · BOSS EVERY 5 WAVES</p>
+  <p class="hint" id="menuHint">BOSS EVERY 5TH WAVE</p>
 </div>
 
 <div id="gameover" class="screen hidden">
@@ -130,18 +163,29 @@
   <p class="final-label">FINAL SCORE</p>
   <p id="finalScore" class="final-score">0</p>
   <p id="newRecord" class="new-record hidden">★ NEW RECORD ★</p>
+  <p id="goStats"></p>
   <p class="hs">HIGH SCORE <span id="finalHigh">0</span></p>
   <button id="restartBtn" class="btn">↻ RELAUNCH</button>
 </div>
 
 <div id="pause" class="screen hidden">
   <h2>PAUSED</h2>
-  <p class="hint">PRESS <b>P</b> TO RESUME</p>
+  <div class="row">
+    <button id="btnResume" class="btn small">▶ RESUME</button>
+    <button id="btnRestart2" class="btn small ghost">↻ RESTART</button>
+    <button id="btnMenu" class="btn small ghost">✕ MENU</button>
+  </div>
 </div>
 
 <div id="nogl" class="screen hidden">
   <h2 class="go-title">NO WEBGL</h2>
   <p class="hint">THIS DEVICE / BROWSER CANNOT RUN WEBGL</p>
+</div>
+
+<div id="rotate">
+  <div class="icon">📱</div>
+  <h2>ROTATE YOUR DEVICE</h2>
+  <p>THIS GAME PLAYS IN LANDSCAPE</p>
 </div>
 
 <script type="module" src="./src/main.js"></script>

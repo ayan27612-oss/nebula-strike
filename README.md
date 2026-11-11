@@ -1,68 +1,38 @@
-# 🚀 NEBULA STRIKE
+# NEBULA STRIKE
 
-> Neon void combat — survive the waves. A fully procedural **3D space combat game** that runs in your browser. No build step, no assets to download — every star, explosion and sound is generated in code.
+A 3D space shooter that runs in the browser, built with Three.js.
 
-**▶ PLAY NOW: <https://ayan27612-oss.github.io/nebula-strike/>**
+Fly around, shoot down drones and asteroids, survive the waves. Every 5th wave there is a boss. Waves keep getting harder until you run out of lives — your high score is saved locally.
 
----
+Everything in the game (models, backgrounds, explosions, sounds) is generated in code, so there are no asset files.
 
-## ✨ Features
+**Play:** <https://ayan27612-oss.github.io/nebula-strike/>
 
-- **Real-time 3D** rendered with [Three.js](https://threejs.org) and glowing **UnrealBloom** post-processing
-- **Procedural everything** — nebulae, starfields, asteroids, drones and the boss are generated at runtime (zero image assets)
-- **4 enemy classes** — Weavers, Snipers, Tanks and Swarm drones, each with distinct flight & fire patterns
-- **Boss fights** every 5th wave: the *Dreadnought* with radial bullet-hell bursts, aimed volleys and escorts
-- **Combo system** — chain kills within 2.5s to multiply your score up to ×3
-- **Power-ups** — 🔧 Repair, 🛡 Shield (invulnerability), ⚡ Triple-shot
-- **Destructible asteroids** that split into fragments when destroyed
-- **Synthesized sound** — lasers, explosions, pickups and a generative bass/pad soundtrack via WebAudio (no audio files)
-- **Score popups, screen shake, hit flashes, engine trails** and other juice
-- **Mobile friendly** — drag to fly, auto-fire on touch
-- High score saved in `localStorage`
+## Controls
 
-## 🎮 Controls
-
-| Action | Desktop | Mobile |
+| | Desktop | Mobile |
 |---|---|---|
-| Fly | Mouse / `WASD` / Arrows | Drag anywhere |
-| Fire | Hold click / `Space` | Auto-fire while touching |
-| Pause | `P` / `Esc` | — |
-| Mute | `M` | 🔊 button |
+| Move | mouse / WASD / arrows | drag on the left half of the screen |
+| Fire | hold click / space | auto-fires while flying, or hold FIRE |
+| Pause | P / Esc | pause button |
+| Mute | M | mute button |
 
-## 🧪 Tech
+On phones the game asks for fullscreen and locks to landscape if the browser allows it. If your browser blocks that, just rotate the phone manually.
 
-- Three.js `0.160` (ES modules via import map — no bundler)
-- `EffectComposer` → `RenderPass` → `UnrealBloomPass` → `OutputPass`
-- Procedural geometry (noise-displaced icosahedra, extruded ship wings)
-- Pooled bullets / particles / trail sprites for stable framerates
-- WebAudio API: oscillators + filtered noise, all synthesized live
+## Power-ups
 
-## 🏃 Run locally
+Drones sometimes drop pickups: repair (+1 life), shield (6s invulnerability) and triple shot (8s). The boss always drops two.
+
+## Run locally
 
 Any static server works:
 
 ```bash
-# from the repo root
 python3 -m http.server 8000
-# then open http://localhost:8000
 ```
 
-(Deployed via GitHub Pages.)
+Then open <http://localhost:8000>.
 
-## 📁 Structure
+## License
 
-```
-nebula-strike/
-├── index.html      # markup, neon UI, styles, import map
-├── src/
-│   └── main.js     # the entire game: render, sim, audio, input
-└── README.md
-```
-
-## 📄 License
-
-MIT — see [LICENSE](LICENSE).
-
----
-
-*Built with [OpenCode](https://opencode.ai).*
+MIT

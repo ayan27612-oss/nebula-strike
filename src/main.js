@@ -1,7 +1,7 @@
 /* ============================================================
    NEBULA STRIKE — neon void combat
-   A single-file Three.js game: rendering, simulation,
-   procedural assets, synthesized audio, input & UI.
+   Single-file Three.js game: rendering, simulation, procedural
+   assets, synthesized audio, desktop + mobile input, UI.
    ============================================================ */
 
 import * as THREE from 'three';
@@ -14,6 +14,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const BOUNDS = { x: 24, y: 13 };
 const SPAWN_Z = -175;
+const JOY_R = 70;
 const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 
 let state = 'menu';            // menu | playing | paused | gameover
@@ -26,6 +27,8 @@ let shake = 0;
 let muted = false;
 let bossIndex = 0;
 
+const stats = { kills: 0, asteroids: 0, shotsFired: 0, shotsHit: 0 };
+
 // wave spawning
 let waveQueue = [];
 let spawnTimer = 0;
@@ -37,31 +40,38 @@ try { muted = localStorage.getItem('nebula-strike-muted') === '1'; } catch (e) {
 
 const shipTarget = { x: 0, y: 0 };
 const keys = {};
-let firing = false;
+
+if (isTouch) document.body.classList.add('touch');
 
 /* ---------------- DOM ---------------- */
 
 const $ = id => document.getElementById(id);
 const ui = {
   hud: $('hud'), score: $('score'), waveLabel: $('waveLabel'), hearts: $('hearts'),
-  combo: $('combo'), timers: $('timers'), muteBtn: $('muteBtn'),
+  combo: $('combo'), timers: $('timers'), muteBtn: $('muteBtn'), fsBtn: $('fsBtn'), pauseBtn: $('pauseBtn'),
   banner: $('banner'), bannerText: $('bannerText'), bannerSub: $('bannerSub'),
   bossBar: $('bossBar'), bossFill: $('bossFill'), bossLabel: $('bossLabel'),
   menu: $('menu'), startBtn: $('startBtn'), menuHigh: $('menuHigh'),
-  keyControls: $('keyControls'), touchHint: $('touchHint'),
+  keyControls: $('keyControls'), touchHint: $('touchHint'), menuHint: $('menuHint'),
   gameover: $('gameover'), finalScore: $('finalScore'), finalHigh: $('finalHigh'),
-  newRecord: $('newRecord'), restartBtn: $('restartBtn'),
-  pause: $('pause'), nogl: $('nogl'), hitflash: $('hitflash'),
-  popups: $('popups'),
+  newRecord: $('newRecord'), restartBtn: $('restartBtn'), goStats: $('goStats'),
+  pause: $('pause'), btnResume: $('btnResume'), btnRestart2: $('btnRestart2'), btnMenu: $('btnMenu'),
+  nogl: $('nogl'), hitflash: $('hitflash'), popups: $('popups'),
+  fireBtn: $('fireBtn'), joyBase: $('joyBase'), joyKnob: $('joyKnob'),
 };
 
-ui.menuHigh.textContent = high;
+ui.menuHigh.textContent = high.toLocaleString();
 if (isTouch) {
   ui.keyControls.classList.add('hidden');
   ui.touchHint.classList.remove('hidden');
+  ui.menuHint.textContent = 'PLAYS IN LANDSCAPE · FULLSCREEN ON LAUNCH';
 }
 function applyMuteIcon() { ui.muteBtn.textContent = muted ? '🔇' : '🔊'; }
 applyMuteIcon();
+
+function setTouchUI() {
+  ui.fireBtn.classList.toggle('hidden', !(isTouch && state === 'playing'));
+}
 
 /* ---------------- audio (all synthesized) ---------------- */
 
@@ -148,7 +158,7 @@ const AudioFX = {
 
   startMusic() {
     if (!this.ctx || this.musicTimer) return;
-    const spb = 60 / 104 / 2;                       // 8th notes @104 bpm
+    const spb = 60 / 104 / 2;
     const bass = [55, 0, 55, 55, 0, 65.41, 0, 55, 49, 0, 49, 49, 0, 58.27, 0, 43.65];
     const chords = [[220, 261.63, 329.63], [174.61, 220, 261.63]];
     this.nextBeat = this.ctx.currentTime + 0.1;
@@ -187,9 +197,9 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x02010a);
-scene.fog = new THREE.FogExp2(0x02010a, 0.0042);
+scene.fog = new THREE.FogExp2(0x02010a, 0.0035);
 
-const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 700);
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 900);
 camera.position.set(0, 3.4, 30);
 
 scene.add(new THREE.AmbientLight(0x334466, 0.65));
@@ -199,7 +209,7 @@ scene.add(sun);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.95, 0.5, 0.18);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.0, 0.55, 0.16);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
 
@@ -220,8 +230,7 @@ function radialTexture(size, stops) {
   for (const [off, col] of stops) grad.addColorStop(off, col);
   g.fillStyle = grad;
   g.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(c);
-  return tex;
+  return new THREE.CanvasTexture(c);
 }
 
 const texGlow = radialTexture(128, [
@@ -231,15 +240,37 @@ const texGlow = radialTexture(128, [
 const texParticle = radialTexture(64, [
   [0, 'rgba(255,255,255,1)'], [0.35, 'rgba(255,255,255,0.7)'], [1, 'rgba(255,255,255,0)'],
 ]);
+const texRing = radialTexture(256, [
+  [0, 'rgba(255,255,255,0)'], [0.55, 'rgba(255,255,255,0)'],
+  [0.72, 'rgba(255,255,255,0.9)'], [0.85, 'rgba(255,255,255,0)'], [1, 'rgba(255,255,255,0)'],
+]);
 function nebulaTexture(hex) {
   return radialTexture(256, [
     [0, hex + 'e6'], [0.4, hex + '55'], [0.75, hex + '18'], [1, hex + '00'],
   ]);
 }
+function skyTexture() {
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 512;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, '#050214');
+  grad.addColorStop(0.5, '#0a0526');
+  grad.addColorStop(0.78, '#150a38');
+  grad.addColorStop(1, '#241145');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 2, 512);
+  return new THREE.CanvasTexture(c);
+}
 
-/* ---------------- background: stars & nebulae ---------------- */
+/* ---------------- background: sky, stars, nebulae, planet ---------------- */
 
-const drifters = [];
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(480, 32, 16),
+  new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, fog: false, depthWrite: false })
+);
+sky.renderOrder = -1;
+scene.add(sky);
 
 function makeStars(count, minR, maxR, size, opacity) {
   const geo = new THREE.BufferGeometry();
@@ -265,38 +296,76 @@ function makeStars(count, minR, maxR, size, opacity) {
   return pts;
 }
 
-const starFar = makeStars(isTouch ? 2400 : 4600, 140, 420, 1.15, 0.9);
-const starNear = makeStars(isTouch ? 500 : 900, 60, 140, 1.9, 0.85);
+const starFar = makeStars(isTouch ? 2400 : 4600, 140, 420, 1.35, 0.9);
+const starNear = makeStars(isTouch ? 500 : 900, 60, 140, 2.1, 0.85);
+const starCluster = makeStars(220, 180, 320, 3.2, 0.6);
 
+const spinners = []; // { mesh, spin }
 const NEB_COLORS = ['#7b2fff', '#00e5ff', '#ff2f92', '#ff7b2f'];
-for (let i = 0; i < 6; i++) {
+const nebulae = [];
+for (let i = 0; i < 8; i++) {
   const mat = new THREE.SpriteMaterial({
     map: nebulaTexture(NEB_COLORS[i % NEB_COLORS.length]),
-    transparent: true, opacity: 0.30, depthWrite: false,
+    transparent: true, opacity: 0.28, depthWrite: false,
     blending: THREE.AdditiveBlending, fog: false,
   });
   const s = new THREE.Sprite(mat);
-  s.position.set((Math.random() - 0.5) * 320, (Math.random() - 0.5) * 150, -160 - Math.random() * 150);
-  const sc = 110 + Math.random() * 90;
+  s.position.set((Math.random() - 0.5) * 340, (Math.random() - 0.5) * 160, -160 - Math.random() * 160);
+  const sc = 110 + Math.random() * 100;
   s.scale.set(sc, sc, 1);
   mat.rotation = Math.random() * Math.PI * 2;
   scene.add(s);
-  drifters.push({ obj: s, mat, spin: (Math.random() - 0.5) * 0.02 });
+  nebulae.push({ mat, spin: (Math.random() - 0.5) * 0.02 });
 }
+
+// distant ringed planet
+const planet = new THREE.Mesh(
+  new THREE.SphereGeometry(26, 48, 32),
+  new THREE.MeshStandardMaterial({ color: 0x4a2f6e, roughness: 1, metalness: 0, emissive: 0x1a0f2e, emissiveIntensity: 0.5 })
+);
+planet.position.set(-105, 48, -330);
+scene.add(planet);
+spinners.push({ mesh: planet, spin: 0.012 });
+
+const planetAtmo = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: texGlow, color: 0x9a6cff, transparent: true, opacity: 0.22,
+  depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+}));
+planetAtmo.position.copy(planet.position);
+planetAtmo.scale.set(120, 120, 1);
+scene.add(planetAtmo);
+
+const planetRing = new THREE.Mesh(
+  new THREE.TorusGeometry(38, 1.7, 2, 90),
+  new THREE.MeshBasicMaterial({ color: 0xcbb3ff, transparent: true, opacity: 0.28, fog: false })
+);
+planetRing.position.copy(planet.position);
+planetRing.rotation.x = 1.9; planetRing.rotation.y = 0.4;
+scene.add(planetRing);
 
 /* ---------------- the ship ---------------- */
 
 function buildShip() {
   const g = new THREE.Group();
-  const hullMat = new THREE.MeshStandardMaterial({ color: 0x1a2340, metalness: 0.85, roughness: 0.32 });
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x2a3a5c, metalness: 0.85, roughness: 0.3 });
   const darkMat = new THREE.MeshStandardMaterial({ color: 0x0b1030, metalness: 0.9, roughness: 0.25 });
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0x0b1030, metalness: 0.8, roughness: 0.3, emissive: 0x00e5ff, emissiveIntensity: 1.6 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: 0x0a1626, metalness: 1, roughness: 0.12, emissive: 0x1b6d8a, emissiveIntensity: 0.5 });
-  const wingMat = new THREE.MeshStandardMaterial({ color: 0x141d3a, metalness: 0.85, roughness: 0.35, side: THREE.DoubleSide });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x0b1030, metalness: 0.8, roughness: 0.3, emissive: 0x00e5ff, emissiveIntensity: 1.8 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x0a1626, metalness: 1, roughness: 0.12, emissive: 0x1b6d8a, emissiveIntensity: 0.6 });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x1a2748, metalness: 0.85, roughness: 0.32, side: THREE.DoubleSide });
+  const exhaustMat = new THREE.MeshBasicMaterial({ color: 0x59d9ff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
 
   const body = new THREE.Mesh(new THREE.ConeGeometry(0.62, 4.0, 24), hullMat);
   body.rotation.x = -Math.PI / 2;
   g.add(body);
+
+  // twin nose prongs
+  const prongGeo = new THREE.ConeGeometry(0.15, 0.8, 8);
+  prongGeo.rotateX(-Math.PI / 2);
+  for (const sx of [-0.36, 0.36]) {
+    const p = new THREE.Mesh(prongGeo, hullMat);
+    p.position.set(sx, -0.05, -2.3);
+    g.add(p);
+  }
 
   const spine = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 2.8), trimMat);
   spine.position.set(0, 0.56, 0.15);
@@ -311,7 +380,7 @@ function buildShip() {
   cockpit.position.set(0, 0.42, -0.35);
   g.add(cockpit);
 
-  // swept delta wings (extruded shapes)
+  // swept delta wings
   const shape = new THREE.Shape();
   shape.moveTo(0, -1.7); shape.lineTo(3.1, -0.1); shape.lineTo(3.5, 0.4);
   shape.lineTo(0.45, 0.8); shape.lineTo(0, 0.55); shape.closePath();
@@ -329,12 +398,35 @@ function buildShip() {
   wingL.rotation.z = 0.07;
   g.add(wingL);
 
-  // engines: center + two wing pods
+  // glowing wing edges
+  const edgeGeo = new THREE.BoxGeometry(2.9, 0.045, 0.09);
+  const edgeR = new THREE.Mesh(edgeGeo, trimMat);
+  edgeR.position.set(2.15, -0.02, 0.95); edgeR.rotation.y = -0.42;
+  g.add(edgeR);
+  const edgeL = new THREE.Mesh(edgeGeo, trimMat);
+  edgeL.position.set(-2.15, -0.02, 0.95); edgeL.rotation.y = 0.42;
+  g.add(edgeL);
+
+  // nav lights (blink alternately)
+  const navGeo = new THREE.SphereGeometry(0.1, 8, 8);
+  const navL = new THREE.Mesh(navGeo, new THREE.MeshBasicMaterial({ color: 0xff3b3b, fog: false }));
+  navL.position.set(-3.65, 0, 0.7); g.add(navL);
+  const navR = new THREE.Mesh(navGeo, new THREE.MeshBasicMaterial({ color: 0x3bff6f, fog: false }));
+  navR.position.set(3.65, 0, 0.7); g.add(navR);
+
+  // engines
   const engGeo = new THREE.CylinderGeometry(0.3, 0.42, 0.9, 14);
   engGeo.rotateX(Math.PI / 2);
   const engineC = new THREE.Mesh(engGeo, darkMat); engineC.position.set(0, 0, 2.55); g.add(engineC);
   const engineL = new THREE.Mesh(engGeo, darkMat); engineL.scale.setScalar(0.6); engineL.position.set(-2.4, 0, 1.6); g.add(engineL);
   const engineR = new THREE.Mesh(engGeo, darkMat); engineR.scale.setScalar(0.6); engineR.position.set(2.4, 0, 1.6); g.add(engineR);
+
+  // exhaust plumes
+  const exhaustGeo = new THREE.ConeGeometry(0.2, 1.5, 10);
+  exhaustGeo.rotateX(Math.PI / 2);
+  const exC = new THREE.Mesh(exhaustGeo, exhaustMat); exC.position.set(0, 0, 3.55); g.add(exC);
+  const exL = new THREE.Mesh(exhaustGeo, exhaustMat); exL.scale.setScalar(0.55); exL.position.set(-2.4, 0, 2.35); g.add(exL);
+  const exR = new THREE.Mesh(exhaustGeo, exhaustMat); exR.scale.setScalar(0.55); exR.position.set(2.4, 0, 2.35); g.add(exR);
 
   // engine glow sprites
   const glowAt = (x, y, z, s) => {
@@ -351,7 +443,7 @@ function buildShip() {
 
   g.scale.setScalar(1.12);
   scene.add(g);
-  return { group: g, glows, engineLight };
+  return { group: g, glows, exhausts: [exC, exL, exR], engineLight, navL, navR };
 }
 const ship = buildShip();
 
@@ -425,6 +517,39 @@ function burst(pos, palette, opts = {}) {
   b.fire(pos, palette, opts.speed ?? 7, opts.size ?? 0.55, opts.dur ?? 0.9);
 }
 
+class Shockwave {
+  constructor() {
+    this.mat = new THREE.SpriteMaterial({ map: texRing, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    this.sprite = new THREE.Sprite(this.mat);
+    this.sprite.visible = false;
+    scene.add(this.sprite);
+    this.life = 0; this.max = 0.55; this.grow = 16;
+  }
+  fire(pos, color, maxScale = 16, dur = 0.55) {
+    this.sprite.position.copy(pos);
+    this.mat.color.set(color);
+    this.max = dur; this.life = dur;
+    this.grow = maxScale;
+    this.sprite.scale.set(1, 1, 1);
+    this.sprite.visible = true;
+  }
+  update(dt) {
+    if (this.life <= 0) return;
+    this.life -= dt;
+    if (this.life <= 0) { this.sprite.visible = false; this.mat.opacity = 0; return; }
+    const t = 1 - this.life / this.max;
+    const s = 1 + t * this.grow;
+    this.sprite.scale.set(s, s, 1);
+    this.mat.opacity = (1 - t) * 0.7;
+  }
+}
+const waves = [];
+for (let i = 0; i < 10; i++) waves.push(new Shockwave());
+function shockwave(pos, color, maxScale = 16, dur = 0.55) {
+  const w = waves.reduce((a, x) => (x.life < a.life ? x : a));
+  w.fire(pos, color, maxScale, dur);
+}
+
 class Flash {
   constructor() {
     this.light = new THREE.PointLight(0xffffff, 0, 34, 2);
@@ -488,10 +613,10 @@ function updateTrails(dt) {
 
 /* ---------------- bullets ---------------- */
 
-const boltGeoP = new THREE.CylinderGeometry(0.09, 0.09, 1.9, 6);
+const boltGeoP = new THREE.CylinderGeometry(0.1, 0.1, 2.0, 6);
 boltGeoP.rotateX(Math.PI / 2);
-const boltMatP = new THREE.MeshBasicMaterial({ color: 0x9ff8ff, fog: false });
-const boltGeoE = new THREE.SphereGeometry(0.26, 8, 8);
+const boltMatP = new THREE.MeshBasicMaterial({ color: 0xbdfbff, fog: false });
+const boltGeoE = new THREE.SphereGeometry(0.28, 8, 8);
 const boltMatE = {
   0xff4d6d: new THREE.MeshBasicMaterial({ color: 0xff4d6d, fog: false }),
   0xffd24d: new THREE.MeshBasicMaterial({ color: 0xffd24d, fog: false }),
@@ -523,7 +648,10 @@ function spawnBolt(list, geo, mat, speed, pos, dir) {
 
 /* ---------------- enemies ---------------- */
 
-const droneGeo = new THREE.OctahedronGeometry(0.95, 0);
+const droneGeoWeaver = new THREE.OctahedronGeometry(0.95, 0);
+const droneGeoSniper = new THREE.OctahedronGeometry(0.95, 0);
+const droneGeoTank = new THREE.CylinderGeometry(0.95, 0.95, 0.8, 6);
+const droneGeoSwarm = new THREE.TetrahedronGeometry(1.05, 0);
 const ringGeo = new THREE.TorusGeometry(1.18, 0.07, 8, 26);
 const eyeGeo = new THREE.SphereGeometry(0.3, 12, 10);
 const enemyLightPalette = {
@@ -567,8 +695,9 @@ class Enemy {
     });
 
     this.group = new THREE.Group();
-    const core = new THREE.Mesh(droneGeo, this.mat);
-    if (type === 'sniper') core.scale.set(0.85, 1.0, 1.45);
+    const geo = type === 'tank' ? droneGeoTank : type === 'swarm' ? droneGeoSwarm : droneGeoWeaver;
+    const core = new THREE.Mesh(geo, this.mat);
+    if (type === 'sniper') core.scale.set(0.75, 1.0, 1.6);
     this.group.add(core);
     if (type !== 'swarm') {
       const ring = new THREE.Mesh(ringGeo, boltMatE[T.color]);
@@ -580,6 +709,11 @@ class Enemy {
     eye.position.z = -0.85;
     this.eye = eye;
     this.group.add(eye);
+    const glowMat = new THREE.SpriteMaterial({ map: texGlow, color: T.color, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    this.glowMat = glowMat;
+    const glow = new THREE.Sprite(glowMat);
+    glow.scale.set(3.4, 3.4, 1);
+    this.group.add(glow);
     this.group.scale.setScalar(T.scale);
     this.group.position.set(x, y, SPAWN_Z - Math.random() * 30);
     scene.add(this.group);
@@ -611,7 +745,6 @@ class Enemy {
     this.flash *= Math.exp(-8 * dt);
     this.mat.emissiveIntensity = 1.1 + this.flash * 5;
 
-    // fire
     this.fireTimer -= dt;
     if (this.fireTimer <= 0 && state === 'playing') {
       this.fire();
@@ -620,10 +753,8 @@ class Enemy {
   }
 
   fire() {
-    this.group.updateMatrixWorld(true);
     const from = this.group.position;
     const aim = tmpV.copy(ship.group.position).sub(from).normalize();
-    const colors = [this.T.color];
     if (this.T.spread) {
       for (let i = 0; i < this.T.spread; i++) {
         const d = aim.clone();
@@ -636,7 +767,7 @@ class Enemy {
       spawnBolt(enemyBolts, boltGeoE, boltMatE[this.T.color], this.T.boltSpeed, from, aim);
     }
     AudioFX.zap();
-    flash(from, colors[0], 2.5);
+    flash(from, this.T.color, 2.5);
   }
 
   hit(dmg) {
@@ -647,10 +778,12 @@ class Enemy {
 
   die(reward) {
     if (!this.alive) return;
-    burst(this.group.position, enemyLightPalette[this.type], { speed: 8, dur: 0.85 });
+    burst(this.group.position, enemyLightPalette[this.type], { speed: 8, dur: 0.85, size: 0.6 });
+    shockwave(this.group.position, this.T.color, 10, 0.5);
     flash(this.group.position, this.T.color, 6);
     AudioFX.boom(this.type === 'tank' ? 1.3 : 0.9);
     if (reward) {
+      stats.kills++;
       const mult = 1 + comboChain * 0.25;
       addScore(Math.round(this.score * mult / 5) * 5, this.group.position, '#aef6ff');
       if (Math.random() < 0.14) spawnPickup(this.group.position);
@@ -662,6 +795,7 @@ class Enemy {
     this.alive = false;
     scene.remove(this.group);
     this.mat.dispose();
+    this.glowMat.dispose();
   }
 }
 
@@ -694,13 +828,18 @@ class Boss {
       emissive: 0xff5e3a, emissiveIntensity: 1.0,
     });
     this.group = new THREE.Group();
-    const core = new THREE.Mesh(droneGeo, this.mat);
+    const core = new THREE.Mesh(droneGeoWeaver, this.mat);
     core.scale.setScalar(3.2);
     this.group.add(core);
     const r1 = new THREE.Mesh(ringGeo, boltMatE[0xff5e3a]); r1.scale.setScalar(1.45); r1.rotation.x = 1.25; this.r1 = r1; this.group.add(r1);
     const r2 = new THREE.Mesh(ringGeo, boltMatE[0xff2f92]); r2.scale.setScalar(1.7); r2.rotation.y = 1.25; this.r2 = r2; this.group.add(r2);
     const eye = new THREE.Mesh(eyeGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
     eye.scale.setScalar(2.2); eye.position.z = -2.8; this.eye = eye; this.group.add(eye);
+    const glowMat = new THREE.SpriteMaterial({ map: texGlow, color: 0xff5e3a, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+    this.glowMat = glowMat;
+    const glow = new THREE.Sprite(glowMat);
+    glow.scale.set(10, 10, 1);
+    this.group.add(glow);
     this.group.position.set(0, 0, SPAWN_Z);
     this.light = new THREE.PointLight(0xff5e3a, 2.4, 46, 2);
     this.group.add(this.light);
@@ -735,7 +874,6 @@ class Boss {
 
   attack() {
     const from = this.group.position;
-    this.group.updateMatrixWorld(true);
     if (this.pattern === 0) {
       const n = 12;
       for (let i = 0; i < n; i++) {
@@ -781,14 +919,15 @@ class Boss {
     if (!this.alive) return;
     const p = this.group.position;
     for (let i = 0; i < 3; i++) {
-      const delay = i * 220;
       setTimeout(() => {
-        burst(p, enemyLightPalette.boss, { speed: 10 + i * 3, dur: 1.1 });
+        burst(p, enemyLightPalette.boss, { speed: 10 + i * 3, dur: 1.1, size: 0.7 });
+        shockwave(p, i % 2 ? 0xff2f92 : 0xff5e3a, 22, 0.7);
         flash(p, 0xff5e3a, 9);
         AudioFX.boom(1.6);
         shake = Math.min(shake + 0.8, 1.6);
-      }, delay);
+      }, i * 220);
     }
+    stats.kills++;
     addScore(2500 + 500 * bossIndex, p, '#ffd24d');
     if (lives < 5) { lives++; popup('+1 LIFE', p, '#7dff9e'); }
     spawnPickup(p);
@@ -801,6 +940,7 @@ class Boss {
     this.alive = false;
     scene.remove(this.group);
     this.mat.dispose();
+    this.glowMat.dispose();
     ui.bossBar.classList.add('hidden');
     ui.bossLabel.classList.add('hidden');
   }
@@ -836,7 +976,9 @@ class Asteroid {
     this.hp = size > 2.6 ? 4 : size > 1.5 ? 2 : 1;
     this.alive = true;
     this.geo = rockGeo(size);
-    this.mesh = new THREE.Mesh(this.geo, rockMat);
+    this.mat = rockMat.clone();
+    this.mat.color.offsetHSL((Math.random() - 0.5) * 0.06, Math.random() * 0.14, (Math.random() - 0.5) * 0.08);
+    this.mesh = new THREE.Mesh(this.geo, this.mat);
     this.mesh.position.set(x, y, z);
     this.vel = vel || new THREE.Vector3((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 3, 6.5 + Math.random() * 7);
     this.spin = new THREE.Vector3((Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6);
@@ -854,8 +996,10 @@ class Asteroid {
   }
   die() {
     burst(this.mesh.position, rockPalette, { speed: 5, dur: 0.8, size: 0.5 });
+    shockwave(this.mesh.position, 0xd9c9a8, 8, 0.45);
     flash(this.mesh.position, 0xffc48f, 3);
     AudioFX.boom(0.7);
+    stats.asteroids++;
     addScore(this.size > 2.6 ? 60 : this.size > 1.5 ? 40 : 25, this.mesh.position, '#ffd9a8');
     if (this.size > 1.7) {
       for (const off of [-0.8, 0.8]) {
@@ -870,6 +1014,7 @@ class Asteroid {
     this.alive = false;
     scene.remove(this.mesh);
     this.geo.dispose();
+    this.mat.dispose();
   }
 }
 
@@ -925,7 +1070,7 @@ function updatePickups(dt) {
     p.group.rotation.x += 0.8 * dt;
     const d = tmpV.copy(ship.group.position).sub(p.group.position);
     const dist = d.length();
-    if (dist < 10) p.group.position.addScaledVector(d.normalize(), 13 * dt);   // magnet
+    if (dist < 10) p.group.position.addScaledVector(d.normalize(), 13 * dt);
     else p.group.position.z += 3 * dt;
     if (dist < 2.4 && state === 'playing') { collectPickup(p); continue; }
     if (p.life <= 0 || p.group.position.z > 40) { p.alive = false; scene.remove(p.group); p.mat.dispose(); }
@@ -992,7 +1137,6 @@ function waveComposition(n) {
   };
   const list = [];
   for (const [type, c] of Object.entries(counts)) for (let i = 0; i < c; i++) list.push(type);
-  // shuffle
   for (let i = list.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
     [list[i], list[j]] = [list[j], list[i]];
@@ -1008,7 +1152,7 @@ function startWave(n) {
   asteroidTimer = 2.0;
   spawnTimer = 0.8;
   waveClearTimer = -1;
-  bannerShow('WAVE ' + n, n % 5 === 0 ? '⚠ DREADNOUGHT DETECTED ⚠' : '');
+  bannerShow('WAVE ' + n, n % 5 === 0 ? '⚠ DREADNOUGHT DETECTED ⚠' : (n === 1 ? 'DESTROY EVERYTHING' : ''));
   AudioFX.wave();
 }
 
@@ -1052,15 +1196,16 @@ function playerHit() {
 /* ---------------- game flow ---------------- */
 
 function clearEntities() {
-  for (const e of enemies) { e.alive = false; scene.remove(e.group); if (e.mat) e.mat.dispose(); }
+  for (const e of enemies) { e.alive = false; scene.remove(e.group); if (e.mat) e.mat.dispose(); if (e.glowMat) e.glowMat.dispose(); }
   enemies.length = 0;
-  for (const a of asteroids) { a.alive = false; scene.remove(a.mesh); a.geo.dispose(); }
+  for (const a of asteroids) { a.alive = false; scene.remove(a.mesh); a.geo.dispose(); a.mat.dispose(); }
   asteroids.length = 0;
   for (const b of playerBolts) { b.alive = false; b.mesh.visible = false; }
   for (const b of enemyBolts) { b.alive = false; b.mesh.visible = false; }
   for (const p of pickups) { p.alive = false; scene.remove(p.group); p.mat.dispose(); }
   pickups.length = 0;
   for (const b of bursts) { b.life = 0; b.points.visible = false; }
+  for (const w of waves) { w.life = 0; w.sprite.visible = false; }
   for (const f of flashes) { f.life = 0; f.light.visible = false; }
   for (const t of trails) { t.life = 0; t.sprite.visible = false; }
   waveQueue = [];
@@ -1073,6 +1218,7 @@ function resetGame() {
   score = 0; lives = 3; comboChain = 0; comboTimer = 0;
   weaponTimer = 0; shieldTimer = 0; invulnTimer = 0;
   fireCooldown = 0; shake = 0; bossIndex = 0;
+  stats.kills = 0; stats.asteroids = 0; stats.shotsFired = 0; stats.shotsHit = 0;
   shipTarget.x = 0; shipTarget.y = 0;
   ship.group.position.set(0, 0, 0);
   ship.group.rotation.set(0, 0, 0);
@@ -1082,25 +1228,63 @@ function resetGame() {
   state = 'playing';
 }
 
+function goFullscreenLock() {
+  if (!isTouch) return;
+  try {
+    const root = document.documentElement;
+    const req = root.requestFullscreen || root.webkitRequestFullscreen;
+    if (!req) return;
+    const lock = () => {
+      try { screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {}); } catch (e) {}
+    };
+    const p = req.call(root);
+    if (p && p.then) p.then(lock, lock); else lock();
+  } catch (e) {}
+}
+
 function startGame() {
   AudioFX.init();
   AudioFX.resume();
+  goFullscreenLock();
   ui.menu.classList.add('hidden');
   ui.gameover.classList.add('hidden');
+  ui.pause.classList.add('hidden');
   ui.hud.classList.remove('hidden');
   resetGame();
+  setTouchUI();
+}
+
+function goMenu() {
+  clearEntities();
+  state = 'menu';
+  firePointers.clear();
+  endJoy();
+  ui.pause.classList.add('hidden');
+  ui.gameover.classList.add('hidden');
+  ui.hud.classList.add('hidden');
+  ui.menu.classList.remove('hidden');
+  ship.group.visible = true;
+  ship.group.position.set(0, 0, 0);
+  ship.group.rotation.set(0, 0, 0);
+  shieldMesh.visible = false;
+  setTouchUI();
 }
 
 function gameOver() {
   state = 'gameover';
-  firing = false;
+  firePointers.clear();
+  endJoy();
   ship.group.visible = false;
   shieldMesh.visible = false;
+  ui.bossBar.classList.add('hidden');
+  ui.bossLabel.classList.add('hidden');
+  setTouchUI();
   const p = ship.group.position.clone();
   for (let i = 0; i < 3; i++) {
     setTimeout(() => {
       if (state !== 'gameover') return;
-      burst(p, [0x59d9ff, 0xffffff, 0xff7b2f], { speed: 9 + i * 3, dur: 1.1 });
+      burst(p, [0x59d9ff, 0xffffff, 0xff7b2f], { speed: 9 + i * 3, dur: 1.1, size: 0.65 });
+      shockwave(p, 0x59d9ff, 18, 0.7);
       flash(p, 0x59d9ff, 8);
       AudioFX.boom(1.5);
       shake = 1.4;
@@ -1116,6 +1300,8 @@ function gameOver() {
     ui.finalHigh.textContent = high.toLocaleString();
     ui.menuHigh.textContent = high.toLocaleString();
     ui.newRecord.classList.toggle('hidden', !isRecord);
+    const pct = stats.shotsFired > 0 ? Math.round(stats.shotsHit / stats.shotsFired * 100) : 0;
+    ui.goStats.textContent = `WAVES ${wave} · KILLS ${stats.kills} · ROCKS ${stats.asteroids} · ACCURACY ${pct}%`;
     ui.gameover.classList.remove('hidden');
   }, 900);
 }
@@ -1128,6 +1314,7 @@ function togglePause() {
     state = 'playing';
     ui.pause.classList.add('hidden');
   }
+  setTouchUI();
 }
 
 function toggleMute() {
@@ -1135,50 +1322,114 @@ function toggleMute() {
   applyMuteIcon();
 }
 
-/* ---------------- input ---------------- */
+function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      const root = document.documentElement;
+      const req = root.requestFullscreen || root.webkitRequestFullscreen;
+      if (req) {
+        const p = req.call(root);
+        if (p && p.catch) p.catch(() => {});
+      }
+    }
+  } catch (e) {}
+}
 
-addEventListener('pointermove', e => {
-  if (state !== 'playing') return;
-  shipTarget.x = (e.clientX / innerWidth * 2 - 1) * BOUNDS.x;
-  shipTarget.y = -(e.clientY / innerHeight * 2 - 1) * BOUNDS.y;
-  if (e.pointerType === 'touch') firing = true;
-});
-renderer.domElement.addEventListener('pointerdown', e => {
-  AudioFX.init(); AudioFX.resume();
-  if (state !== 'playing') return;
-  firing = true;
-  if (e.pointerType !== 'touch') {
-    shipTarget.x = (e.clientX / innerWidth * 2 - 1) * BOUNDS.x;
-    shipTarget.y = -(e.clientY / innerHeight * 2 - 1) * BOUNDS.y;
-  }
-});
-addEventListener('pointerup', () => { firing = false; });
-addEventListener('pointercancel', () => { firing = false; });
-renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+/* ---------------- input: keyboard ---------------- */
 
 addEventListener('keydown', e => {
   AudioFX.init(); AudioFX.resume();
   keys[e.code] = true;
-  if (e.code === 'Space') {
-    e.preventDefault();
-    if (state === 'playing') firing = true;
-  }
+  if (e.code === 'Space') e.preventDefault();
   if (e.repeat) return;
   if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'Enter') {
-    if (state === 'menu') { ui.startBtn.blur(); startGame(); }
-    else if (state === 'gameover') { ui.restartBtn.blur(); startGame(); }
+    if (state === 'menu' || state === 'gameover') { ui.startBtn.blur(); startGame(); }
   }
 });
-addEventListener('keyup', e => {
-  keys[e.code] = false;
-  if (e.code === 'Space') firing = false;
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+/* ---------------- input: pointer / touch ---------------- */
+
+const firePointers = new Set();
+const joy = { active: false, id: null, ox: 0, oy: 0, sx: 0, sy: 0 };
+
+function endJoy() {
+  joy.active = false;
+  joy.id = null;
+  ui.joyBase.classList.add('hidden');
+  ui.joyKnob.classList.add('hidden');
+}
+
+addEventListener('pointerdown', e => {
+  AudioFX.init(); AudioFX.resume();
+  if (e.target.closest('button')) return;
+  if (state !== 'playing') return;
+  if (e.pointerType === 'touch') {
+    if (e.clientX < innerWidth * 0.55 && !joy.active) {
+      joy.active = true;
+      joy.id = e.pointerId;
+      joy.ox = e.clientX; joy.oy = e.clientY;
+      joy.sx = shipTarget.x; joy.sy = shipTarget.y;
+      ui.joyBase.style.left = joy.ox + 'px';
+      ui.joyBase.style.top = joy.oy + 'px';
+      ui.joyKnob.style.left = joy.ox + 'px';
+      ui.joyKnob.style.top = joy.oy + 'px';
+      ui.joyBase.classList.remove('hidden');
+      ui.joyKnob.classList.remove('hidden');
+    } else {
+      firePointers.add(e.pointerId);
+    }
+  } else {
+    firePointers.add(e.pointerId);
+    shipTarget.x = THREE.MathUtils.clamp((e.clientX / innerWidth * 2 - 1) * BOUNDS.x, -BOUNDS.x, BOUNDS.x);
+    shipTarget.y = THREE.MathUtils.clamp(-(e.clientY / innerHeight * 2 - 1) * BOUNDS.y, -BOUNDS.y, BOUNDS.y);
+  }
 });
+
+addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') {
+    if (joy.active && e.pointerId === joy.id) {
+      let dx = e.clientX - joy.ox, dy = e.clientY - joy.oy;
+      const len = Math.hypot(dx, dy);
+      if (len > JOY_R) { dx *= JOY_R / len; dy *= JOY_R / len; }
+      ui.joyKnob.style.left = (joy.ox + dx) + 'px';
+      ui.joyKnob.style.top = (joy.oy + dy) + 'px';
+      shipTarget.x = THREE.MathUtils.clamp(joy.sx + (dx / JOY_R) * BOUNDS.x * 1.35, -BOUNDS.x, BOUNDS.x);
+      shipTarget.y = THREE.MathUtils.clamp(joy.sy + (-dy / JOY_R) * BOUNDS.y * 1.35, -BOUNDS.y, BOUNDS.y);
+    }
+    return;
+  }
+  if (state !== 'playing' || !firePointers.has(e.pointerId)) return;
+  shipTarget.x = THREE.MathUtils.clamp((e.clientX / innerWidth * 2 - 1) * BOUNDS.x, -BOUNDS.x, BOUNDS.x);
+  shipTarget.y = THREE.MathUtils.clamp(-(e.clientY / innerHeight * 2 - 1) * BOUNDS.y, -BOUNDS.y, BOUNDS.y);
+});
+
+function pointerEnd(e) {
+  firePointers.delete(e.pointerId);
+  if (joy.active && e.pointerId === joy.id) endJoy();
+}
+addEventListener('pointerup', pointerEnd);
+addEventListener('pointercancel', pointerEnd);
+
+ui.fireBtn.addEventListener('pointerdown', e => { e.stopPropagation(); firePointers.add('firebtn'); });
+ui.fireBtn.addEventListener('pointerup', () => firePointers.delete('firebtn'));
+ui.fireBtn.addEventListener('pointercancel', () => firePointers.delete('firebtn'));
+ui.fireBtn.addEventListener('pointerleave', () => firePointers.delete('firebtn'));
+
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
 
 ui.startBtn.addEventListener('click', () => { ui.startBtn.blur(); startGame(); });
 ui.restartBtn.addEventListener('click', () => { ui.restartBtn.blur(); startGame(); });
 ui.muteBtn.addEventListener('click', () => { ui.muteBtn.blur(); toggleMute(); });
+ui.fsBtn.addEventListener('click', () => { ui.fsBtn.blur(); toggleFullscreen(); });
+ui.pauseBtn.addEventListener('click', () => { ui.pauseBtn.blur(); togglePause(); });
+ui.btnResume.addEventListener('click', () => { ui.btnResume.blur(); togglePause(); });
+ui.btnRestart2.addEventListener('click', () => { ui.btnRestart2.blur(); startGame(); });
+ui.btnMenu.addEventListener('click', () => { ui.btnMenu.blur(); goMenu(); });
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && state === 'playing') togglePause();
@@ -1203,21 +1454,22 @@ function updateHUD() {
 const tmpV = new THREE.Vector3();
 const camLook = new THREE.Vector3(0, 0, -40);
 let last = performance.now();
-let hudScoreCache = -1;
 
 function firePlayer() {
   ship.group.updateMatrixWorld(true);
-  const muzzle = ship.group.localToWorld(new THREE.Vector3(0.55 * fireSide, -0.06, -2.1));
-  const dir = tmpV.set(0, 0, -1);
-  spawnBolt(playerBolts, boltGeoP, boltMatP, 95, muzzle, dir);
+  const muzzle = ship.group.localToWorld(new THREE.Vector3(0.55 * fireSide, -0.06, -2.2));
+  spawnBolt(playerBolts, boltGeoP, boltMatP, 95, muzzle, tmpV.set(0, 0, -1));
+  burst(muzzle, [0xbdfbff, 0xffffff], { speed: 2.5, dur: 0.14, size: 0.3 });
   fireSide = -fireSide;
+  let count = 1;
   if (weaponTimer > 0) {
     for (const off of [-0.55, 0.55]) {
       const m2 = ship.group.localToWorld(new THREE.Vector3(off * 1.6, -0.06, -1.8));
-      const d2 = tmpV.set(off * 0.28, 0, -1).normalize();
-      spawnBolt(playerBolts, boltGeoP, boltMatP, 95, m2, d2);
+      spawnBolt(playerBolts, boltGeoP, boltMatP, 95, m2, tmpV.set(off * 0.28, 0, -1).normalize());
     }
+    count = 3;
   }
+  stats.shotsFired += count;
   AudioFX.pew();
 }
 
@@ -1230,67 +1482,70 @@ function tick(now) {
 
   /* --- ship control --- */
   if (state === 'playing') {
-    const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-    const ky = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-    if (kx || ky) {
-      shipTarget.x = THREE.MathUtils.clamp(shipTarget.x + kx * 46 * dt, -BOUNDS.x, BOUNDS.x);
-      shipTarget.y = THREE.MathUtils.clamp(shipTarget.y + ky * 46 * dt, -BOUNDS.y, BOUNDS.y);
-    }
-    const k = 1 - Math.exp(-9 * dt);
-    ship.group.position.x += (shipTarget.x - ship.group.position.x) * k;
-    ship.group.position.y += (shipTarget.y - ship.group.position.y) * k;
-    ship.group.position.z = Math.sin(elapsed * 1.7) * 0.35;
-    ship.group.rotation.z = THREE.MathUtils.clamp((shipTarget.x - ship.group.position.x) * -0.09, -0.7, 0.7);
-    ship.group.rotation.x = THREE.MathUtils.clamp((shipTarget.y - ship.group.position.y) * 0.05, -0.35, 0.35);
-    ship.group.rotation.y = THREE.MathUtils.clamp((shipTarget.x - ship.group.position.x) * -0.03, -0.3, 0.3);
+    // auto-pause when a phone is held in portrait
+    if (isTouch && innerHeight > innerWidth) { togglePause(); }
+    else {
+      const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+      const ky = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+      if (kx || ky) {
+        shipTarget.x = THREE.MathUtils.clamp(shipTarget.x + kx * 46 * dt, -BOUNDS.x, BOUNDS.x);
+        shipTarget.y = THREE.MathUtils.clamp(shipTarget.y + ky * 46 * dt, -BOUNDS.y, BOUNDS.y);
+      }
+      const k = 1 - Math.exp(-9 * dt);
+      ship.group.position.x += (shipTarget.x - ship.group.position.x) * k;
+      ship.group.position.y += (shipTarget.y - ship.group.position.y) * k;
+      ship.group.position.z = Math.sin(elapsed * 1.7) * 0.35;
+      ship.group.rotation.z = THREE.MathUtils.clamp((shipTarget.x - ship.group.position.x) * -0.09, -0.7, 0.7);
+      ship.group.rotation.x = THREE.MathUtils.clamp((shipTarget.y - ship.group.position.y) * 0.05, -0.35, 0.35);
+      ship.group.rotation.y = THREE.MathUtils.clamp((shipTarget.x - ship.group.position.x) * -0.03, -0.3, 0.3);
 
-    // firing
-    fireCooldown -= dt;
-    if (firing && fireCooldown <= 0) {
-      firePlayer();
-      fireCooldown = weaponTimer > 0 ? 0.19 : 0.165;
-    }
+      const wantFire = keys.Space || firePointers.size > 0 || joy.active;
+      fireCooldown -= dt;
+      if (wantFire && fireCooldown <= 0) {
+        firePlayer();
+        fireCooldown = weaponTimer > 0 ? 0.19 : 0.165;
+      }
 
-    // invuln blink
-    invulnTimer = Math.max(0, invulnTimer - dt);
-    if (invulnTimer > 0) ship.group.visible = Math.floor(elapsed * 18) % 2 === 0;
-    else ship.group.visible = true;
+      invulnTimer = Math.max(0, invulnTimer - dt);
+      if (invulnTimer > 0) ship.group.visible = Math.floor(elapsed * 18) % 2 === 0;
+      else ship.group.visible = true;
 
-    // timers
-    weaponTimer = Math.max(0, weaponTimer - dt);
-    shieldTimer = Math.max(0, shieldTimer - dt);
-    shieldMesh.visible = shieldTimer > 0;
-    if (shieldTimer > 0) {
-      shieldMesh.position.copy(ship.group.position);
-      shieldMesh.rotation.y += dt;
-      const s = 1 + 0.04 * Math.sin(elapsed * 10);
-      shieldMesh.scale.setScalar(s);
-    }
-    comboTimer -= dt;
-    if (comboTimer <= 0) comboChain = 0;
+      weaponTimer = Math.max(0, weaponTimer - dt);
+      shieldTimer = Math.max(0, shieldTimer - dt);
+      shieldMesh.visible = shieldTimer > 0;
+      if (shieldTimer > 0) {
+        shieldMesh.position.copy(ship.group.position);
+        shieldMesh.rotation.y += dt;
+        shieldMesh.scale.setScalar(1 + 0.04 * Math.sin(elapsed * 10));
+      }
+      comboTimer -= dt;
+      if (comboTimer <= 0) comboChain = 0;
 
-    /* --- spawning --- */
-    if (waveQueue.length && spawnTimer <= 0 && enemies.filter(e => e.alive).length < 9) {
-      const t = waveQueue.shift();
-      if (t === 'boss') enemies.push(new Boss());
-      else spawnEnemy(t);
-      spawnTimer = THREE.MathUtils.clamp(1.4 - wave * 0.05, 0.55, 1.4);
-    }
-    spawnTimer -= dt;
-    if (asteroidsQuota > 0 && asteroidTimer <= 0) {
-      spawnAsteroid();
-      asteroidsQuota--;
-      asteroidTimer = 2.2 + Math.random() * 1.2;
-    }
-    asteroidTimer -= dt;
+      /* --- spawning --- */
+      if (waveQueue.length && spawnTimer <= 0 && enemies.filter(e => e.alive).length < 9) {
+        const t = waveQueue.shift();
+        if (t === 'boss') enemies.push(new Boss());
+        else spawnEnemy(t);
+        spawnTimer = THREE.MathUtils.clamp(1.4 - wave * 0.05, 0.55, 1.4);
+      }
+      spawnTimer -= dt;
+      if (asteroidsQuota > 0 && asteroidTimer <= 0) {
+        spawnAsteroid();
+        asteroidsQuota--;
+        asteroidTimer = 2.2 + Math.random() * 1.2;
+      }
+      asteroidTimer -= dt;
 
-    if (!waveQueue.length && !enemies.some(e => e.alive)) {
-      if (waveClearTimer < 0) waveClearTimer = 2.6;
-      else {
-        waveClearTimer -= dt;
-        if (waveClearTimer <= 0) {
-          score += 300 + wave * 120;
-          startWave(wave + 1);
+      if (!waveQueue.length && !enemies.some(e => e.alive)) {
+        if (waveClearTimer < 0) {
+          waveClearTimer = 1.8;
+          const bonus = 300 + wave * 120;
+          score += bonus;
+          bannerShow('WAVE ' + wave + ' CLEARED', '+' + bonus + ' BONUS');
+          AudioFX.wave();
+        } else {
+          waveClearTimer -= dt;
+          if (waveClearTimer <= 0) startWave(wave + 1);
         }
       }
     }
@@ -1303,12 +1558,18 @@ function tick(now) {
     ship.group.visible = true;
   }
 
-  /* --- engine glow & trail --- */
+  /* --- ship details --- */
   const flick = 0.9 + 0.18 * Math.sin(elapsed * 40) + Math.random() * 0.1;
-  for (const g of ship.glows) {
-    const base = g === ship.glows[0] ? 1 : 0.55;
-    g.scale.set(2.6 * base * flick, 2.6 * base * flick, 1);
+  for (let i = 0; i < ship.glows.length; i++) {
+    const base = i === 0 ? 1 : 0.55;
+    ship.glows[i].scale.set(2.6 * base * flick, 2.6 * base * flick, 1);
   }
+  for (let i = 0; i < ship.exhausts.length; i++) {
+    const base = i === 0 ? 1 : 0.55;
+    ship.exhausts[i].scale.set(base, base, base * flick);
+  }
+  ship.navL.visible = Math.floor(elapsed * 2.5) % 2 === 0;
+  ship.navR.visible = Math.floor(elapsed * 2.5 + 1) % 2 === 0;
   trailTimer -= dt;
   if (trailTimer <= 0 && ship.group.visible) { spawnTrail(); trailTimer = 0.038; }
   updateTrails(dt);
@@ -1342,7 +1603,8 @@ function tick(now) {
         const rr = e.r + 0.4;
         if (b.mesh.position.distanceToSquared(e.group.position) < rr * rr) {
           b.alive = false; b.mesh.visible = false;
-          burst(b.mesh.position, [0xffffff, 0x9ff8ff], { speed: 3, dur: 0.3, size: 0.3 });
+          stats.shotsHit++;
+          burst(b.mesh.position, [0xffffff, 0xbdfbff], { speed: 3, dur: 0.3, size: 0.3 });
           e.hit(1);
           break;
         }
@@ -1352,6 +1614,7 @@ function tick(now) {
         if (!a.alive) continue;
         if (b.mesh.position.distanceToSquared(a.mesh.position) < a.r * a.r) {
           b.alive = false; b.mesh.visible = false;
+          stats.shotsHit++;
           burst(b.mesh.position, rockPalette, { speed: 3, dur: 0.3, size: 0.3 });
           a.hit(1);
           break;
@@ -1370,7 +1633,12 @@ function tick(now) {
       const rr = e.r + 1.6;
       if (e.group.position.distanceToSquared(ship.group.position) < rr * rr) {
         playerHit();
-        e.die(false);
+        if (e.isBoss) { // boss doesn't die on ramming, just nudges
+          const push = tmpV.copy(e.group.position).sub(ship.group.position).normalize().multiplyScalar(2.5);
+          e.group.position.add(push);
+        } else {
+          e.die(false);
+        }
       }
     }
     for (const a of asteroids) {
@@ -1383,13 +1651,16 @@ function tick(now) {
     }
   }
 
-  /* --- fx --- */
+  /* --- fx & background --- */
   for (const b of bursts) b.update(dt);
+  for (const w of waves) w.update(dt);
   for (const f of flashes) f.update(dt);
-  for (const d of drifters) { d.mat.rotation += d.spin * dt; }
+  for (const n of nebulae) n.mat.rotation += n.spin * dt;
+  for (const s of spinners) s.mesh.rotation.y += s.spin * dt;
 
-  starFar.rotation.z += 0.0035 * dt * 10;
-  starNear.rotation.z += 0.006 * dt * 10;
+  starFar.rotation.z += 0.035 * dt;
+  starNear.rotation.z += 0.06 * dt;
+  starCluster.rotation.z += 0.02 * dt;
   starFar.material.opacity = 0.85 + 0.1 * Math.sin(elapsed * 2.2);
 
   /* --- camera --- */
@@ -1409,7 +1680,6 @@ function tick(now) {
   camera.lookAt(camLook);
 
   /* --- UI --- */
-  if (score !== hudScoreCache) { updateHUD(); hudScoreCache = score; }
   updateHUD();
   updatePopups(dt);
   if (bannerHide > 0 && elapsed > bannerHide) ui.banner.classList.add('hidden');
